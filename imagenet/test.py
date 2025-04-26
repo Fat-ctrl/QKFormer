@@ -172,43 +172,52 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train = build_dataset(is_train=True, args=args)
+    # Only build train dataset if not eval
+    if not args.eval:
+        dataset_train = build_dataset(is_train=True, args=args)
+    else:
+        dataset_train = None
     dataset_val = build_dataset(is_train=False, args=args)
 
-    if True:  # args.distributed:
+    if not args.eval:  # Only build train sampler if not eval
         num_tasks = misc.get_world_size()
         global_rank = misc.get_rank()
         sampler_train = torch.utils.data.DistributedSampler(
             dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
         )
         print("Sampler_train = %s" % str(sampler_train))
-        if args.dist_eval:
-            if len(dataset_val) % num_tasks != 0:
-                print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
-                      'This will slightly alter validation results as extra duplicate entries are added to achieve '
-                      'equal num of samples per-process.')
-            sampler_val = torch.utils.data.DistributedSampler(
-                dataset_val, num_replicas=num_tasks, rank=global_rank,
-                shuffle=True)  # shuffle=True to reduce monitor bias
-        else:
-            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        sampler_train = None
+
+    if args.dist_eval:
+        num_tasks = misc.get_world_size()
+        global_rank = misc.get_rank()
+        if len(dataset_val) % num_tasks != 0:
+            print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
+                  'This will slightly alter validation results as extra duplicate entries are added to achieve '
+                  'equal num of samples per-process.')
+        sampler_val = torch.utils.data.DistributedSampler(
+            dataset_val, num_replicas=num_tasks, rank=global_rank,
+            shuffle=True)  # shuffle=True to reduce monitor bias
+    else:
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    if global_rank == 0 and args.log_dir is not None and not args.eval:
+    if not args.eval and misc.get_rank() == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
         log_writer = SummaryWriter(log_dir=args.log_dir)
     else:
         log_writer = None
 
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_mem,
-        drop_last=True,
-    )
+    if not args.eval:
+        data_loader_train = torch.utils.data.DataLoader(
+            dataset_train, sampler=sampler_train,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_mem,
+            drop_last=True,
+        )
+    else:
+        data_loader_train = None
 
     data_loader_val = torch.utils.data.DataLoader(
         dataset_val, sampler=sampler_val,
