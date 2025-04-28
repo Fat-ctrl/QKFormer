@@ -375,6 +375,9 @@ class spiking_transformer(nn.Module):
 
 @register_model
 def QKFormer(pretrained=False, **kwargs):
+    # Remove unsupported keys
+    kwargs.pop('pretrained_cfg_overlay', None)
+    kwargs.pop('cache_dir', None)
     model = spiking_transformer(
         **kwargs
     )

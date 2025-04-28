@@ -32,8 +32,8 @@ from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
 from timm.data import create_dataset, resolve_data_config, Mixup, FastCollateMixup, AugMixDataset, create_loader
 # from loader import create_loader
-from timm.models import create_model, safe_model_name, resume_checkpoint, load_checkpoint, \
-    convert_splitbn_model, model_parameters
+from timm.models import create_model, safe_model_name, resume_checkpoint, load_checkpoint, model_parameters
+from timm.layers import convert_splitbn_model
 from timm.utils import *
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy, JsdCrossEntropy
 from timm.optim import create_optimizer_v2, optimizer_kwargs
@@ -486,7 +486,11 @@ def main():
         # NOTE: EMA model does not need to be wrapped by DDP
 
     # setup learning rate schedule and starting epoch
-    lr_scheduler, num_epochs = create_scheduler(args, optimizer)
+    if args.epochs > 0:
+        lr_scheduler, num_epochs = create_scheduler(args, optimizer)
+    else:
+        lr_scheduler, num_epochs = None, 0
+
     start_epoch = 0
     if args.start_epoch is not None:
         # a specified start_epoch will always override the resume epoch
@@ -503,10 +507,10 @@ def main():
     dataset_train = create_dataset(
         args.dataset,
         root=args.data_dir, split=args.train_split, is_training=True,
-        batch_size=args.batch_size, repeats=args.epoch_repeats)
+        batch_size=args.batch_size, repeats=args.epoch_repeats, download=True)
 
     dataset_eval = create_dataset(
-        args.dataset, root=args.data_dir, split=args.val_split, is_training=False, batch_size=args.batch_size)
+        args.dataset, root=args.data_dir, split=args.val_split, is_training=False, batch_size=args.batch_size, download=True)
 
     # setup mixup / cutmix
     collate_fn = None

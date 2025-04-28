@@ -293,7 +293,7 @@ class PatchEmbeddingStage(nn.Module):
 
         return x
 
-class spiking_transformer(nn.Module):
+class hierarchical_spiking_transformer(nn.Module):
     def __init__(self,
                  T=4,
                  img_size_h=128, img_size_w=128, patch_size=16, in_channels=2, num_classes=11,
@@ -404,21 +404,19 @@ class spiking_transformer(nn.Module):
         x = self.head(x.mean(0))
         return x
 
-
-def QKFormer_10_768(T=1, **kwargs):
-    model = spiking_transformer(
+def QKFormer_10_384(T=1, **kwargs):
+    model = hierarchical_spiking_transformer(
         T=T,
         img_size_h=224, img_size_w=224,
-        patch_size=16, embed_dims=768, num_heads=12, mlp_ratios=4,
+        patch_size=16, embed_dims=384, num_heads=6, mlp_ratios=4,
         in_channels=3, num_classes=1000, qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=10, sr_ratios=1,
         **kwargs
     )
     return model
 
-
 def QKFormer_10_512(T=1, **kwargs):
-    model = spiking_transformer(
+    model = hierarchical_spiking_transformer(
         T=T,
         img_size_h=224, img_size_w=224,
         patch_size=16, embed_dims=512, num_heads=8, mlp_ratios=4,
@@ -429,16 +427,17 @@ def QKFormer_10_512(T=1, **kwargs):
     return model
 
 
-def QKFormer_10_384(T=1, **kwargs):
-    model = spiking_transformer(
+def QKFormer_10_768(T=1, **kwargs):
+    model = hierarchical_spiking_transformer(
         T=T,
         img_size_h=224, img_size_w=224,
-        patch_size=16, embed_dims=384, num_heads=6, mlp_ratios=4,
+        patch_size=16, embed_dims=768, num_heads=12, mlp_ratios=4,
         in_channels=3, num_classes=1000, qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=10, sr_ratios=1,
         **kwargs
     )
     return model
+
 
 if __name__ == '__main__':
     H = 128
