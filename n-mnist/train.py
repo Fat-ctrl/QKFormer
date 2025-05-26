@@ -12,7 +12,7 @@ import math
 from torch.cuda import amp
 import model, utils
 from spikingjelly.clock_driven import functional
-from spikingjelly.datasets import n_caltech101
+from spikingjelly.datasets import n_mnist
 from timm.models import create_model
 from timm.data import Mixup
 from timm.optim import create_optimizer
@@ -36,9 +36,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='PyTorch Classification Training')
 
     parser.add_argument('--model', default='SEWResNet', help='model')
-    parser.add_argument('--dataset', default='n-caltech101', help='dataset')
-    parser.add_argument('--num-classes', type=int, default=101, metavar='N', help='number of label classes (default: 101)')
-    parser.add_argument('--data-path', default='/media/data/n-caltech101/', help='dataset')
+    parser.add_argument('--dataset', default='n-mnist', help='dataset')
+    parser.add_argument('--num-classes', type=int, default=10, metavar='N', help='number of label classes (default: 10)')
+    parser.add_argument('--data-path', default='/media/data/n-mnist/', help='dataset')
     parser.add_argument('--device', default='cuda', help='device')
     parser.add_argument('-b', '--batch-size', default=16, type=int)
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -90,7 +90,7 @@ def parse_args():
     #Learning rate scheduler
     parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER',
                         help='LR scheduler (default: "cosine"')
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
+    parser.add_argument('--lr', type=float, default=5e-3, metavar='LR',
                         help='learning rate (default: 5e-4)')
     parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct',
                         help='learning rate noise on/off epoch percentages')
@@ -106,7 +106,7 @@ def parse_args():
                         help='warmup learning rate (default: 1e-6)')
     parser.add_argument('--min-lr', type=float, default=1e-5, metavar='LR',
                         help='lower lr bound for cyclic schedulers that hit 0 (1e-5)')
-    parser.add_argument('--epochs', type=int, default=300, metavar='N',
+    parser.add_argument('--epochs', type=int, default=100, metavar='N',
                         help='number of epochs to train (default: 2)')
     parser.add_argument('--epoch-repeats', type=float, default=0., metavar='N',
                         help='epoch repeat multiplier (number of times to repeat dataset epoch per train epoch).')
@@ -292,14 +292,13 @@ def load_data(dataset_dir, distributed, T):
 
     st = time.time()
 
-    origin_set = n_caltech101.NCaltech101(
+    origin_set = n-n_mnist.NMIST(
         root=dataset_dir,
-        data_type='frame',       # convert events to frames
-        frames_number=T,         # e.g. T=16
-        split_by='number'        # you can also try 'time'
+        data_type='frame',
+        frames_number=T,
+        split_by='number'
     )
-    dataset_train, dataset_test = split_to_train_test_set(0.9, origin_set, 101)
-    
+    dataset_train, dataset_test = split_to_train_test_set(0.9, origin_set, 10)
     print("Took", time.time() - st)
 
     print("Creating data loaders")
@@ -434,7 +433,7 @@ def main(args):
 
 
     train_snn_aug = transforms.Compose([
-                    transforms.Resize((180, 240)),  # (height, width)
+                    #transforms.Resize((180, 240)),  # (height, width)
                     transforms.RandomHorizontalFlip(p=0.5)
                     ])
     train_trivalaug = autoaugment.SNNAugmentWide()
