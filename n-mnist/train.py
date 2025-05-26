@@ -181,7 +181,7 @@ def split_to_train_test_set(train_ratio: float, origin_dataset: torch.utils.data
 
     return torch.utils.data.Subset(origin_dataset, train_idx), torch.utils.data.Subset(origin_dataset, test_idx)
 
-
+resize_transform = transforms.Resize((32, 32))
 
 def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, print_freq, scaler=None, T_train=None, aug=None, trival_aug=None, mixup_fn=None):
     model.train()
@@ -196,6 +196,11 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, pri
         image, target = image.to(device), target.to(device)
         image = image.float()  # [N, T, C, H, W]
         N,T,C,H,W = image.shape
+        
+        # Resize each frame to 32x32
+        image = image.view(-1, C, H, W)  # (N*T, C, H, W)
+        image = resize_transform(image)  # (N*T, C, 32, 32)
+        image = image.view(N, T, C, 32, 32)  # (N, T, C, 32, 32)
 
         if aug != None:
             # image = image.flatten(1, 2).contiguous() # 合并T,C
@@ -270,6 +275,12 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test
             image = image.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             image = image.float()
+            # --- Add resize for test images ---
+            N, T, C, H, W = image.shape
+            image = image.view(-1, C, H, W)
+            image = resize_transform(image)
+            image = image.view(N, T, C, 32, 32)
+            # ----------------------------------
             output = model(image)
             loss = criterion(output, target)
             functional.reset_net(model)
@@ -287,29 +298,35 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test
     return loss, acc1, acc5
 
 def load_data(dataset_dir, distributed, T):
-    # Data loading code
     print("Loading data")
-
     st = time.time()
 
-    origin_set = n-n_mnist.NMIST(
+    # Load train and test splits separately
+    origin_set_train = n_mnist.NMNIST(
         root=dataset_dir,
+        train=True,
         data_type='frame',
         frames_number=T,
         split_by='number'
     )
-    dataset_train, dataset_test = split_to_train_test_set(0.9, origin_set, 10)
-    print("Took", time.time() - st)
+    origin_set_test = n_mnist.NMNIST(
+        root=dataset_dir,
+        train=False,
+        data_type='frame',
+        frames_number=T,
+        split_by='number'
+    )
 
+    print("Took", time.time() - st)
     print("Creating data loaders")
     if distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
-        test_sampler = torch.utils.data.distributed.DistributedSampler(dataset_test)
+        train_sampler = torch.utils.data.distributed.DistributedSampler(origin_set_train)
+        test_sampler = torch.utils.data.distributed.DistributedSampler(origin_set_test)
     else:
-        train_sampler = torch.utils.data.RandomSampler(dataset_train)
-        test_sampler = torch.utils.data.SequentialSampler(dataset_test)
+        train_sampler = torch.utils.data.RandomSampler(origin_set_train)
+        test_sampler = torch.utils.data.SequentialSampler(origin_set_test)
 
-    return dataset_train, dataset_test, train_sampler, test_sampler
+    return origin_set_train, origin_set_test, train_sampler, test_sampler
 
 def main(args):
 
@@ -433,7 +450,7 @@ def main(args):
 
 
     train_snn_aug = transforms.Compose([
-                    #transforms.Resize((180, 240)),  # (height, width)
+                    #transforms.Resize((32, 32)),  # (height, width)
                     transforms.RandomHorizontalFlip(p=0.5)
                     ])
     train_trivalaug = autoaugment.SNNAugmentWide()
