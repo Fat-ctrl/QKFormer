@@ -19,6 +19,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 import autoaugment
+import torch.distributed as dist
 _seed_ = 2021
 import random
 random.seed(2021)
@@ -140,6 +141,8 @@ def parse_args():
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
     parser.add_argument('--mixup-off-epoch', default=0, type=int, metavar='N',
                         help='Turn off mixup after this epoch, disabled if 0 (default: 0)')
+    parser.add_argument('--only-create-dataset', action='store_true',
+                    help='Only create the dataset and exit.')
     args = parser.parse_args()
     return args
 
@@ -301,21 +304,49 @@ def load_data(dataset_dir, distributed, T):
     print("Loading data")
     st = time.time()
 
-    # Load train and test splits separately
-    origin_set_train = n_mnist.NMNIST(
-        root=dataset_dir,
-        train=True,
-        data_type='frame',
-        frames_number=T,
-        split_by='number'
-    )
-    origin_set_test = n_mnist.NMNIST(
-        root=dataset_dir,
-        train=False,
-        data_type='frame',
-        frames_number=T,
-        split_by='number'
-    )
+    # Only rank 0 downloads/extracts or creates directories
+    is_main = not distributed or (hasattr(dist, "get_rank") and dist.get_rank() == 0)
+    if distributed:
+        if dist.is_available() and dist.is_initialized():
+            rank = dist.get_rank()
+        else:
+            rank = 0
+
+    if is_main:
+        origin_set_train = n_mnist.NMNIST(
+            root=dataset_dir,
+            train=True,
+            data_type='frame',
+            frames_number=T,
+            split_by='number'
+        )
+        origin_set_test = n_mnist.NMNIST(
+            root=dataset_dir,
+            train=False,
+            data_type='frame',
+            frames_number=T,
+            split_by='number'
+        )
+    if distributed:
+        # Wait for rank 0 to finish
+        dist.barrier()
+        if not is_main:
+            origin_set_train = n_mnist.NMNIST(
+                root=dataset_dir,
+                train=True,
+                data_type='frame',
+                frames_number=T,
+                split_by='number'
+            )
+            origin_set_test = n_mnist.NMNIST(
+                root=dataset_dir,
+                train=False,
+                data_type='frame',
+                frames_number=T,
+                split_by='number'
+            )
+    else:
+        pass
 
     print("Took", time.time() - st)
     print("Creating data loaders")
@@ -369,6 +400,9 @@ def main(args):
     data_path = args.data_path
 
     dataset_train, dataset_test, train_sampler, test_sampler = load_data(data_path, args.distributed, args.T)
+    if getattr(args, "only_create_dataset", False):
+        print("Dataset created, exiting as requested.")
+        return
 
     data_loader = torch.utils.data.DataLoader(
         dataset=dataset_train,
@@ -533,10 +567,24 @@ if __name__ == "__main__":
     main(args)
 
 '''
-/raid/wfang/datasets/DVS128Gesture
+# One GPUsGPUs
+python ./QKFormer/n-mnist/train.py --model QKFormer --data-path . --output /kaggle/working/output/ --batch-size 16 --epochs 100
 
-python train_imagenet.py --tb --amp --output-dir ./logs --model PlainNet --device cuda:0 --lr-step-size 64 --epoch 192 --T_train 12 --T 16 --data-path /raid/wfang/datasets/DVS128Gesture
+# Multiple GPUs - Still janky
+python ./QKFormer/n-mnist/train.py --batch-size 16 --data-path . --output ./QKFormer/n-mnist/output --model QKFormer --only-create-dataset
 
-python train_imagenet.py --tb --amp --output-dir ./logs --model SEWResNet --connect_f ADD --device cuda:0 --lr-step-size 64 --epoch 192 --T_train 12 --T 16 --data-path /raid/wfang/datasets/DVS128Gesture
-
+!CUDA_VISIBLE_DEVICES=0,1 \
+torchrun --nproc_per_node=2 \
+         --nnodes=1 \
+         --rdzv_backend=c10d \
+         --rdzv_endpoint=127.0.0.1:29500 \
+         ./QKFormer/n-mnist/train.py \
+           --model QKFormer \
+           --data-path .\
+           --batch-size 16 \
+           --output /kaggle/working/output/ \
+           --epochs 100 \
+           --world-size 2 \
+           --dist-url tcp://127.0.0.1:29500 \
+           --amp
 '''

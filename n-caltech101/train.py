@@ -19,6 +19,7 @@ from timm.optim import create_optimizer
 from timm.scheduler import create_scheduler
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 import autoaugment
+import torch.distributed as dist
 _seed_ = 2021
 import random
 random.seed(2021)
@@ -140,6 +141,8 @@ def parse_args():
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
     parser.add_argument('--mixup-off-epoch', default=0, type=int, metavar='N',
                         help='Turn off mixup after this epoch, disabled if 0 (default: 0)')
+    parser.add_argument('--only-create-dataset', action='store_true',
+                        help='Only create the dataset and exit.')
     args = parser.parse_args()
     return args
 
@@ -298,21 +301,39 @@ def evaluate(model, criterion, data_loader, device, print_freq=100, header='Test
     return loss, acc1, acc5
 
 def load_data(dataset_dir, distributed, T):
-    # Data loading code
     print("Loading data")
-
     st = time.time()
 
-    origin_set = n_caltech101.NCaltech101(
-        root=dataset_dir,
-        data_type='frame',       # convert events to frames
-        frames_number=T,         # e.g. T=16
-        split_by='number'        # you can also try 'time'
-    )
-    dataset_train, dataset_test = split_to_train_test_set(0.9, origin_set, 101)
-    
-    print("Took", time.time() - st)
+    # Only rank 0 downloads/extracts or creates directories
+    is_main = not distributed or (hasattr(dist, "get_rank") and dist.get_rank() == 0)
+    if distributed:
+        if dist.is_available() and dist.is_initialized():
+            rank = dist.get_rank()
+        else:
+            rank = 0
 
+    if is_main:
+        origin_set = n_caltech101.NCaltech101(
+            root=dataset_dir,
+            data_type='frame',
+            frames_number=T,
+            split_by='number'
+        )
+    if distributed:
+        # Wait for rank 0 to finish
+        dist.barrier()
+        if not is_main:
+            origin_set = n_caltech101.NCaltech101(
+                root=dataset_dir,
+                data_type='frame',
+                frames_number=T,
+                split_by='number'
+            )
+    else:
+        pass
+
+    dataset_train, dataset_test = split_to_train_test_set(0.9, origin_set, 101)
+    print("Took", time.time() - st)
     print("Creating data loaders")
     if distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
@@ -364,6 +385,9 @@ def main(args):
     data_path = args.data_path
 
     dataset_train, dataset_test, train_sampler, test_sampler = load_data(data_path, args.distributed, args.T)
+    if getattr(args, "only_create_dataset", False):
+        print("Dataset created, exiting as requested.")
+        return
 
     data_loader = torch.utils.data.DataLoader(
         dataset=dataset_train,
@@ -528,10 +552,24 @@ if __name__ == "__main__":
     main(args)
 
 '''
-/raid/wfang/datasets/DVS128Gesture
+# One GPUsGPUs
+python ./QKFormer/n-caltech101/train.py --model QKFormer --data-path . --output /kaggle/working/output/ --batch-size 16 --epochs 100
 
-python train_imagenet.py --tb --amp --output-dir ./logs --model PlainNet --device cuda:0 --lr-step-size 64 --epoch 192 --T_train 12 --T 16 --data-path /raid/wfang/datasets/DVS128Gesture
+# Multiple GPUs - Still jankyjanky
+python ./QKFormer/n-caltech101/train.py --batch-size 16 --data-path . --output ./QKFormer/n-caltech101/output --model QKFormer --only-create-dataset
 
-python train_imagenet.py --tb --amp --output-dir ./logs --model SEWResNet --connect_f ADD --device cuda:0 --lr-step-size 64 --epoch 192 --T_train 12 --T 16 --data-path /raid/wfang/datasets/DVS128Gesture
-
+!CUDA_VISIBLE_DEVICES=0,1 \
+torchrun --nproc_per_node=2 \
+         --nnodes=1 \
+         --rdzv_backend=c10d \
+         --rdzv_endpoint=127.0.0.1:29500 \
+         ./QKFormer/n-caltech101/train.py \
+           --model QKFormer \
+           --data-path .\
+           --batch-size 16 \
+           --output /kaggle/working/output/ \
+           --epochs 100 \
+           --world-size 2 \
+           --dist-url tcp://127.0.0.1:29500 \
+           --amp
 '''
